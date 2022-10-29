@@ -24,7 +24,8 @@ with Cache('.publish.cache') as cache:
         init_dir='public_html',
         submit=Submit.MissingOrChanged,
         verbose=False,
-        cache=cache)
+        cache=cache,
+        tls=True)
     publisher.syncdir(dirname='.', remotedirname='', extensions=['.html', '.jpg'])
     publisher.syncdir(dirname='css', extensions=['.css'])
     publisher.syncdir(dirname='images', extensions=['.jpg', '.png'])
@@ -43,3 +44,8 @@ publisher.syncdir(dirname='public', remotedirname='.', recurse=True)
 Pointing out the obvious: storing your server password in plain-text isn't the
 most secure of approaches. But you knew that, and you were already planning to
 use [keyring](https://pypi.org/project/keyring/) to manage the password.
+
+## Version history
+
+* v0.1.0: Enable TLS by default for the FTP connection
+* v0.0.1: First version in public git

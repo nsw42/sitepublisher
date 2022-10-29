@@ -41,7 +41,7 @@ class SitePublisher:
     Class that maintains an FTP connection, making it easy to
     publish a website to an FTP server
     """
-    def __init__(self, ftpsite, username, passwd, init_dir, submit, verbose, cache):
+    def __init__(self, ftpsite, username, passwd, init_dir, submit, verbose, cache, tls=True):
         """
         Open a connection to the given site, logging in with the given
         username/password, changing directory to the given directory
@@ -52,7 +52,10 @@ class SitePublisher:
         today = datetime.datetime.today().replace(hour=0, minute=0, second=0)
         self.today = time.mktime(today.timetuple())
 
-        self.connection = ftplib.FTP(ftpsite, user=username, passwd=passwd)
+        if tls:
+            self.connection = ftplib.FTP_TLS(ftpsite, user=username, passwd=passwd)
+        else:
+            self.connection = ftplib.FTP(ftpsite, user=username, passwd=passwd)
         self.submit = submit
         self.verbose = verbose
         self.cd(init_dir)
