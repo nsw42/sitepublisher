@@ -1,5 +1,7 @@
 #! /bin/bash
 
+cd $(dirname "$0")
+
 if [ -d bin ]; then
   read -p "Existing venv found. Delete it? [Y/N] " -n 1
   if [ "$(echo "$REPLY" | tr A-Z a-z)" = "y" ]; then
