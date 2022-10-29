@@ -30,15 +30,16 @@ def getfilehash(filename):
 class Submit:
     """
     Enum of values that influence how the ftp publisher is to behave.
-    Submit.Missing indicates files that are missing (or the wrong size) on the
-    remote server
+    Submit.MissingOrChanged indicates files that are missing (or the wrong
+      size) on the remote server, or whose (md5) hash have changed since the
+      site was last published.
     Submit.ChangedToday indicates files that have changed on the local
-    filesystem since midnight.
+      filesystem since midnight.
     Values may be added together
     """
-    Missing = 1
+    MissingOrChanged = 1
     ChangedToday = 2
-    MissingOrChangedToday = Missing + ChangedToday
+    MissingOrChangedToday = MissingOrChanged + ChangedToday
     AllFiles = 0xff
 
 
@@ -337,7 +338,7 @@ class SitePublisher:
         for leaf in localfiles:
             localf = os.path.join(localdirname, leaf)
             store = False
-            if (submit & Submit.Missing):
+            if (submit & Submit.MissingOrChanged):
                 if (os.path.getsize(localf) == remotefiles.get_file_size(leaf)):
                     # sizes match; how about the hash?
                     remotehash = remotefiles.get_file_hash(leaf)
