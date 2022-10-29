@@ -16,12 +16,19 @@ from .remotedircontents import RemoteDirContents
 class Submit:
     """
     Enum of values that influence how the ftp publisher is to behave.
-    Submit.MissingOrChanged indicates files that are missing (or the wrong
-      size) on the remote server, or whose (md5) hash have changed since the
-      site was last published.
+    Submit.MissingOrChanged indicates files that:
+      * are missing on the remote server
+      * are the wrong size on the remote server
+      * (if a cache is available) have changed (md5) hash since the
+        site was last published.
     Submit.ChangedToday indicates files that have changed on the local
-      filesystem since midnight.
+      filesystem since midnight, and does not reference checksums.
+      (Primarily useful if not using a cache)
+    Submit.AllFiles indicates that all files should be stored, even if
+      hashes match.
     Values may be added together
+    Submit.MissingOrChangedToday is a convenience value representing
+      Submit.MissingOrChanged + Submit.ChangedToday
     """
     MissingOrChanged = 1
     ChangedToday = 2
@@ -51,6 +58,13 @@ class SitePublisher:
         self.cd(init_dir)
         self.cache = cache
 
+    def cd(self, dirname):
+        if dirname[0] == '/':
+            self.connection.cwd('/')
+            dirname = dirname[1:]
+        for one in dirname.split('/'):
+            self.connection.cwd(one)
+
     def _modified_today(self, filename):
         """
         Return true if the local file has changed today
@@ -59,12 +73,31 @@ class SitePublisher:
         # print(filename, today, file_mtime)
         return self.today <= file_mtime
 
-    def cd(self, dirname):
-        if dirname[0] == '/':
-            self.connection.cwd('/')
-            dirname = dirname[1:]
-        for one in dirname.split('/'):
-            self.connection.cwd(one)
+    def _should_store(self,
+                      remotefiles: RemoteDirContents,
+                      submit: Submit,
+                      localf,
+                      leaf):
+        """
+        Returns True iff the given local file, indicated by localf, should be
+        stored to the server. This is based on the information available in
+        remotefiles and the value of submit.
+        leaf is, for convenience, the leaf from localf.
+        """
+        if (submit & Submit.AllFiles) == Submit.AllFiles:
+            return True
+        if (submit & Submit.ChangedToday) and (self._modified_today(localf)):
+            return True
+        if (submit & Submit.MissingOrChanged):
+            if (os.path.getsize(localf) != remotefiles.get_file_size(leaf)):
+                return True
+            # sizes match; how about the hash?
+            remotehash = remotefiles.get_file_hash(leaf)
+            assert remotehash != RemoteDirContents.__RemoteFileMissing__
+            assert remotehash != RemoteDirContents.__RemoteFileIsDirectory__
+            if (remotehash != RemoteDirContents.__RemoteFileAssumedCorrect__) and (remotehash != getfilehash(localf)):
+                return True
+        return False
 
     def syncdir(self,
                 dirname,
@@ -73,8 +106,8 @@ class SitePublisher:
                 submit=None,
                 recurse=False):
         """
-        Synchronise the directory in accordance with the submit
-        attribute passed to the constructor.
+        Update the remote directory with the latest files from dirname.
+        Note that remote files are never deleted.
 
         dirname is a local directory name.
         If remotedirname is not given, it is assumed to be the same
@@ -112,32 +145,18 @@ class SitePublisher:
                         return True
                 return False
             localfiles = [f for f in localfiles if goodextension(f)]
+        localfiles = sorted(localfiles)
+
         if self.cache:
             remotedir = RemoteDirCached(self.cache, dirname, self.connection)
         else:
             remotedir = RemoteDirLive(dirname, self.connection)
-
-        localfiles = sorted(localfiles)
         remotefiles = remotedir.get_contents()
         if self.verbose:
             print('%s: %s' % (output_prefix, localfiles))
         for leaf in localfiles:
             localf = os.path.join(localdirname, leaf)
-            store = False
-            if (submit & Submit.MissingOrChanged):
-                if (os.path.getsize(localf) == remotefiles.get_file_size(leaf)):
-                    # sizes match; how about the hash?
-                    remotehash = remotefiles.get_file_hash(leaf)
-                    assert remotehash != RemoteDirContents.__RemoteFileMissing__
-                    assert remotehash != RemoteDirContents.__RemoteFileIsDirectory__
-                    if (remotehash != RemoteDirContents.__RemoteFileAssumedCorrect__) and \
-                       (remotehash != getfilehash(localf)):
-                        store = True
-                else:
-                    store = True
-            if (submit & Submit.ChangedToday) and (self._modified_today(localf)):
-                store = True
-            if store:
+            if self._should_store(remotefiles, submit, localf, leaf):
                 print(localf)
                 self.connection.storbinary('STOR %s' % leaf, open(localf, 'rb'))
                 size = os.path.getsize(localf)

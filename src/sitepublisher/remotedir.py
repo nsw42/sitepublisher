@@ -18,7 +18,7 @@ class RemoteDir(object):
     def __init__(self, localdirname):
         self.localdirname = localdirname
 
-    def get_contents(self):
+    def get_contents(self) -> RemoteDirContents:
         """
         Return a RemoteDirContents object representing the contents
         of the current directory
