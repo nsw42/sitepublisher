@@ -47,5 +47,6 @@ use [keyring](https://pypi.org/project/keyring/) to manage the password.
 
 ## Version history
 
+* v0.2.0: Switch to JSON instead of pickle for the cache file, to avoid breakages if classes are moved
 * v0.1.0: Enable TLS by default for the FTP connection
 * v0.0.1: First version in public git

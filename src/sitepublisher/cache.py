@@ -1,5 +1,7 @@
+import json
 import os.path
-import pickle
+
+from .remotedircontents import RemoteDirContents
 
 
 class Cache(object):
@@ -10,10 +12,13 @@ class Cache(object):
     """
     def __init__(self, filename):
         self._filename = filename
+        self._contents = {}  # remote dir name -> RemoteDirContents
         if os.path.exists(filename):
-            self._contents = pickle.load(open(filename, 'rb'))
-        else:
-            self._contents = {}  # remote dir name -> RemoteDirContents
+            for dirname, dircontents in json.load(open(filename, 'r')).items():
+                dircontentsobj = RemoteDirContents()
+                for leaf, (size, hsh) in dircontents.items():
+                    dircontentsobj.set_file(leaf, size, hsh)
+                self._contents[dirname] = dircontentsobj
 
     def __enter__(self):
         return self
@@ -40,4 +45,7 @@ class Cache(object):
         self._contents[remote_dir_name] = contents
 
     def save(self):
-        pickle.dump(self._contents, open(self._filename, 'wb'))
+        to_save = {}
+        for dirname, dircontents in self._contents.items():
+            to_save[dirname] = dircontents._contents
+        json.dump(to_save, open(self._filename, 'w'), indent=2, sort_keys=True)
