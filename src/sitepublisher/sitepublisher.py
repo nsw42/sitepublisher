@@ -3,34 +3,14 @@ sitepublisher
 Class that makes it easy to publish a website via FTP
 """
 
-from collections import namedtuple
 import datetime
 import ftplib
-import hashlib
 import os.path
-import sys
 import time
 
-
-def getfilehash(filename):
-    """
-    Returns md5(filename || file data)
-    """
-    try:
-        handle = open(filename, 'rb')
-        # It's tempting to remove the initialisation with the filename,
-        # because it makes it harder to manually verify the contents of
-        # the cache - but doing so will invalidate all of the cache files
-        # that are lying around.
-        md5 = hashlib.md5(filename.encode('utf-8'))
-        while True:
-            data = handle.read(md5.digest_size * 1024)
-            if data == b'':
-                break
-            md5.update(data)
-        return md5.hexdigest()
-    except IOError:
-        return None
+from .filehash import getfilehash
+from .remotedir import RemoteDirCached, RemoteDirLive
+from .remotedircontents import RemoteDirContents
 
 
 class Submit:
@@ -47,166 +27,6 @@ class Submit:
     ChangedToday = 2
     MissingOrChangedToday = MissingOrChanged + ChangedToday
     AllFiles = 0xff
-
-
-RemoteFile = namedtuple('RemoteFile', ('size', 'hsh'))
-
-
-class RemoteDirContents(object):
-    """
-    Class that stores the contents of a remote directory
-    """
-    def __init__(self):
-        self._contents = {}  # leafname -> RemoteFile(val_or_callable, val_or_callable)
-        # size value is an integer number of bytes
-        # hash value is a string md5.hexdigest()
-
-    def leaf_names(self):
-        return self._contents.keys()
-
-    __RemoteFileMissing__ = 1
-    __RemoteFileAssumedCorrect__ = 2
-    __RemoteFileIsDirectory__ = 3
-    __RemoteFileHashUnknown__ = '?'
-
-    def get_file_hash(self, leafname):
-        """
-        Return values are as follows:
-          __RemoteFileMissing__
-              The file is not present on the remote server
-          __RemoteFileAssumedCorrect__
-              The file is present on the remote server, but we do not know
-              whether its contents are correct - so assume they are
-          __RemoteFileIsDirectory__
-              The 'file' is a directory
-          __RemoteFileHashUnknown__
-              The file exists remotely, but not locally; hash not calculated
-          otherwise  md5 hexdigest (as a string)
-        """
-        remotefile = self._contents.get(leafname, None)
-        if remotefile:
-            hsh = remotefile.hsh
-            if callable(hsh):
-                hsh = hsh(leafname)
-        else:
-            hsh = None
-        return hsh
-
-    def get_file_size(self, leafname):
-        """
-        Return values are as follows:
-          None   The file is not present on the remote server
-          -1     The 'file' is a directory
-          >=0    size in bytes
-        """
-        remotefile = self._contents.get(leafname, None)
-        if remotefile:
-            size = remotefile.size
-            if callable(size):
-                size = size(leafname)
-        else:
-            size = None
-        return size
-
-    def set_file(self, leafname, size, hsh):
-        self._contents[leafname] = RemoteFile(size, hsh)
-
-
-class RemoteDir(object):
-    """
-    Abstract base class for querying a remote directory, based either
-    on a cache (RemoteDirCached) or from querying it as needed
-    (RemoteDirLive)
-
-    Currently, the directory it represents is determined by
-    connection.pwd() at the time of construction
-    """
-    def __init__(self, localdirname):
-        self.localdirname = localdirname
-
-    def get_contents(self):
-        """
-        Return a RemoteDirContents object representing the contents
-        of the current directory
-        """
-        raise NotImplementedError()
-
-
-class RemoteDirLive(RemoteDir):
-    """
-    Implementation of the RemoteDir interface to query the remote
-    directory whenever needed
-    """
-
-    def __init__(self, localdirname, connection):
-        super(RemoteDirLive, self).__init__(localdirname)
-        self._connection = connection
-
-    def _callback_get_file_size(self, leafname):
-        try:
-            return self._connection.size(leafname)
-        except ftplib.error_perm:
-            return -1  # let's assume that that error always means 'directory'
-
-    def _callback_get_file_hash(self, leafname):
-        try:
-            _ = self._connection.size(leafname)
-            # if we get this far, let's assume that the file is correct
-            return RemoteDirContents.__RemoteFileAssumedCorrect__
-        except ftplib.error_perm:
-            return ''  # let's assume that that error always means 'directory'
-
-    def get_contents(self):
-        """
-        Return a RemoteDirContents object representing the contents
-        of the current directory
-        """
-        contents = RemoteDirContents()
-        for leafname in self._connection.nlst():
-            size = self._callback_get_file_size
-            hsh = self._callback_get_file_hash
-            contents.set_file(leafname, size, hsh)
-        return contents
-
-
-class RemoteDirCached(RemoteDir):
-    """
-    Implementation of the RemoteDir interface to allow a cache of
-    the remote directory to be preserved.
-
-    Currently, the directory it represents is determined by
-    connection.pwd() at the time of construction
-    """
-    def __init__(self, cache, localdirname, connection):
-        super(RemoteDirCached, self).__init__(localdirname)
-        self._cache = cache
-        self._connection = RemoteDirLive(localdirname, connection)
-        self._dirname = connection.pwd()
-
-    def get_contents(self):
-        """
-        Return a RemoteDirContents object representing the contents
-        of the current directory
-        """
-        contents = self._cache.get_dir_contents(self._dirname)
-        if not contents:
-            print('%s: Populating cache' % self._dirname)
-            contents = self._connection.get_contents()
-            # invariant: everything we put into the cache is populated with known
-            # values, rather than callbacks, so that it may be safely pickled
-            for leaf in contents.leaf_names():
-                size = contents.get_file_size(leaf)
-                hsh = contents.get_file_hash(leaf)
-                if hsh == RemoteDirContents.__RemoteFileAssumedCorrect__:
-                    localfilename = os.path.join(self.localdirname, leaf)
-                    hsh = getfilehash(localfilename)
-                    if hsh is None:
-                        print(f'WARNING: "{self._dirname}/{leaf}" exists on remote server but not locally '
-                              + f'(tried "{localfilename}")', file=sys.stderr)
-                        hsh = RemoteDirContents.__RemoteFileHashUnknown__
-                contents.set_file(leaf, size, hsh)
-            self._cache.set_dir_contents(self._dirname, contents)
-        return contents
 
 
 class SitePublisher:
